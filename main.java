@@ -1390,3 +1390,90 @@ final class RunFilter {
         return registry.getAllRunIds().stream()
                 .filter(id -> registry.getRun(id).getEpochsRecorded() >= minEpochs)
                 .collect(Collectors.toList());
+    }
+
+    static List<String> nonArchived(RunRegistry registry) {
+        return registry.getAllRunIds().stream()
+                .filter(id -> !registry.getRun(id).isArchived())
+                .collect(Collectors.toList());
+    }
+}
+
+// -----------------------------------------------------------------------------
+// STATS AGGREGATOR
+// -----------------------------------------------------------------------------
+
+final class StatsAggregator {
+    static double mean(List<Double> values) {
+        if (values.isEmpty()) return Double.NaN;
+        return values.stream().mapToDouble(Double::doubleValue).sum() / values.size();
+    }
+
+    static double std(List<Double> values) {
+        if (values.size() < 2) return 0;
+        double m = mean(values);
+        double sumSq = values.stream().mapToDouble(v -> (v - m) * (v - m)).sum();
+        return Math.sqrt(sumSq / (values.size() - 1));
+    }
+
+    static double min(List<Double> values) {
+        return values.stream().mapToDouble(Double::doubleValue).min().orElse(Double.NaN);
+    }
+
+    static double max(List<Double> values) {
+        return values.stream().mapToDouble(Double::doubleValue).max().orElse(Double.NaN);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// RUNNER (main entry)
+// -----------------------------------------------------------------------------
+
+public final class TensorProxima08 {
+
+    public static void main(String[] args) throws Exception {
+        RunRegistry registry = new RunRegistry();
+        TrainingConfig config = TrainingConfig.builder()
+                .maxEpochs(47)
+                .batchSize(16)
+                .learningRate(0.0012)
+                .gradientClipNorm(4.0)
+                .checkpointEveryEpochs(5)
+                .randomSeed(TP08Constants.RANDOM_SEED_BASE + 8821)
+                .optimizerName("Adam")
+                .lossName("MSE")
+                .build();
+        int featureDim = 8;
+        int targetDim = 2;
+        int numSamples = 640;
+        Random rng = new Random(config.getRandomSeed());
+        double[][] features = new double[numSamples][featureDim];
+        double[][] targets = new double[numSamples][targetDim];
+        for (int i = 0; i < numSamples; i++) {
+            for (int j = 0; j < featureDim; j++) features[i][j] = rng.nextDouble() * 2 - 1;
+            for (int j = 0; j < targetDim; j++) targets[i][j] = rng.nextDouble();
+        }
+        Dataset dataset = new ArrayDataset(features, targets, config.getRandomSeed());
+        Model model = new LinearModel(featureDim, targetDim, rng);
+        Optimizer optimizer = new AdamOptimizer(config.getLearningRate(), 0.9, 0.999, 1e-8, model.paramCount());
+        LossFunction lossFn = new MSELoss();
+        TrainerBot bot = new TrainerBot(registry, config, lossFn, optimizer, model, dataset);
+        String runId = bot.startRun("submitter_01");
+        TP08Logger logger = new TP08Logger(runId);
+        logger.info("Run started: " + runId);
+        bot.runTraining(runId);
+        logger.info("Run finished. Total runs in registry: " + registry.totalRuns());
+        List<EpochRecord> epochs = registry.getEpochs(runId);
+        logger.info("Epochs recorded: " + epochs.size());
+        List<CheckpointRecord> ckpts = registry.getCheckpoints(runId);
+        logger.info("Checkpoints anchored: " + ckpts.size());
+    }
+
+    // -------------------------------------------------------------------------
+    // STATIC UTILITIES (extended)
+    // -------------------------------------------------------------------------
+
+    public static RunRegistry createRegistry() { return new RunRegistry(); }
+
+    public static TrainingConfig defaultConfig() {
+        return TrainingConfig.builder().build();
