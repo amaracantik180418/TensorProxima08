@@ -172,3 +172,90 @@ final class TrainingConfig {
     }
 
     int getMaxEpochs() { return maxEpochs; }
+    int getBatchSize() { return batchSize; }
+    double getLearningRate() { return learningRate; }
+    double getGradientClipNorm() { return gradientClipNorm; }
+    int getCheckpointEveryEpochs() { return checkpointEveryEpochs; }
+    long getRandomSeed() { return randomSeed; }
+    String getOptimizerName() { return optimizerName; }
+    String getLossName() { return lossName; }
+
+    static Builder builder() { return new Builder(); }
+    static final class Builder {
+        private int maxEpochs = TP08Constants.MAX_EPOCHS_DEFAULT;
+        private int batchSize = TP08Constants.BATCH_SIZE_DEFAULT;
+        private double learningRate = TP08Constants.LEARNING_RATE_DEFAULT;
+        private double gradientClipNorm = TP08Constants.GRADIENT_CLIP_NORM;
+        private int checkpointEveryEpochs = TP08Constants.CHECKPOINT_EVERY_EPOCHS;
+        private long randomSeed = TP08Constants.RANDOM_SEED_BASE + System.nanoTime();
+        private String optimizerName = "Adam";
+        private String lossName = "MSE";
+        Builder maxEpochs(int v) { this.maxEpochs = v; return this; }
+        Builder batchSize(int v) { this.batchSize = v; return this; }
+        Builder learningRate(double v) { this.learningRate = v; return this; }
+        Builder gradientClipNorm(double v) { this.gradientClipNorm = v; return this; }
+        Builder checkpointEveryEpochs(int v) { this.checkpointEveryEpochs = v; return this; }
+        Builder randomSeed(long v) { this.randomSeed = v; return this; }
+        Builder optimizerName(String v) { this.optimizerName = v; return this; }
+        Builder lossName(String v) { this.lossName = v; return this; }
+        TrainingConfig build() {
+            return new TrainingConfig(maxEpochs, batchSize, learningRate,
+                    gradientClipNorm, checkpointEveryEpochs, randomSeed, optimizerName, lossName);
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// LOSS INTERFACE & IMPLEMENTATIONS
+// -----------------------------------------------------------------------------
+
+interface LossFunction {
+    double compute(double[] predicted, double[] target);
+    void computeGradient(double[] predicted, double[] target, double[] gradientOut);
+    String name();
+}
+
+final class MSELoss implements LossFunction {
+    @Override public double compute(double[] pred, double[] target) {
+        if (pred.length != target.length) throw new IllegalArgumentException("length mismatch");
+        double sum = 0;
+        for (int i = 0; i < pred.length; i++) {
+            double d = pred[i] - target[i];
+            sum += d * d;
+        }
+        return sum / pred.length;
+    }
+    @Override public void computeGradient(double[] pred, double[] target, double[] gradientOut) {
+        int n = pred.length;
+        for (int i = 0; i < n; i++)
+            gradientOut[i] = 2.0 * (pred[i] - target[i]) / n;
+    }
+    @Override public String name() { return "MSE"; }
+}
+
+final class CrossEntropyLoss implements LossFunction {
+    @Override public double compute(double[] pred, double[] target) {
+        double sum = 0;
+        for (int i = 0; i < pred.length; i++) {
+            double p = Math.max(1e-15, Math.min(1 - 1e-15, pred[i]));
+            sum -= target[i] * Math.log(p);
+        }
+        return sum / pred.length;
+    }
+    @Override public void computeGradient(double[] pred, double[] target, double[] gradientOut) {
+        int n = pred.length;
+        for (int i = 0; i < n; i++) {
+            double p = Math.max(1e-15, Math.min(1 - 1e-15, pred[i]));
+            gradientOut[i] = -(target[i] / p) / n;
+        }
+    }
+    @Override public String name() { return "CrossEntropy"; }
+}
+
+final class HuberLoss implements LossFunction {
+    private final double delta;
+    HuberLoss(double delta) { this.delta = delta; }
+    @Override public double compute(double[] pred, double[] target) {
+        double sum = 0;
+        for (int i = 0; i < pred.length; i++) {
+            double d = pred[i] - target[i];
