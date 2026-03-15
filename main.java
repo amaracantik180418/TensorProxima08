@@ -520,3 +520,90 @@ final class EpochMetrics {
 }
 
 // -----------------------------------------------------------------------------
+// RUN REGISTRY (in-memory)
+// -----------------------------------------------------------------------------
+
+final class RunRegistry {
+    private final Map<String, TrainingRunRecord> runs = new ConcurrentHashMap<>();
+    private final Map<String, List<EpochRecord>> epochsByRun = new ConcurrentHashMap<>();
+    private final Map<String, List<CheckpointRecord>> checkpointsByRun = new ConcurrentHashMap<>();
+    private final List<String> runIdOrder = new CopyOnWriteArrayList<>();
+
+    String registerRun(String submitterId, int epochCount, byte[] configHash) {
+        String runId = TP08Constants.RUN_ID_PREFIX + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        TrainingRunRecord r = new TrainingRunRecord(runId, submitterId, epochCount, configHash);
+        runs.put(runId, r);
+        runIdOrder.add(runId);
+        epochsByRun.put(runId, new CopyOnWriteArrayList<>());
+        checkpointsByRun.put(runId, new CopyOnWriteArrayList<>());
+        return runId;
+    }
+
+    TrainingRunRecord getRun(String runId) {
+        TrainingRunRecord r = runs.get(runId);
+        if (r == null) throw new TP08RunNotFoundException(runId);
+        return r;
+    }
+
+    void recordEpoch(String runId, int epochIndex, long lossScaled, byte[] gradientRoot) {
+        TrainingRunRecord r = getRun(runId);
+        if (r.isArchived()) throw new TP08CheckpointException("Run archived");
+        if (epochIndex >= r.getEpochCount()) throw new TP08EpochIndexException(epochIndex, r.getEpochCount());
+        if (r.getEpochsRecorded() != epochIndex) throw new TP08CheckpointException("Epoch order");
+        EpochRecord rec = new EpochRecord(runId, epochIndex, lossScaled, gradientRoot);
+        epochsByRun.get(runId).add(rec);
+        r.incrementEpochsRecorded();
+    }
+
+    void anchorCheckpoint(String runId, int checkpointIndex, byte[] stateHash) {
+        TrainingRunRecord r = getRun(runId);
+        if (r.isArchived()) throw new TP08CheckpointException("Run archived");
+        CheckpointRecord rec = new CheckpointRecord(runId, checkpointIndex, stateHash);
+        checkpointsByRun.get(runId).add(rec);
+        r.incrementCheckpointsAnchored();
+    }
+
+    void archiveRun(String runId) {
+        getRun(runId).setArchived(true);
+    }
+
+    List<String> getAllRunIds() { return new ArrayList<>(runIdOrder); }
+    int totalRuns() { return runs.size(); }
+    List<EpochRecord> getEpochs(String runId) { return new ArrayList<>(epochsByRun.getOrDefault(runId, List.of())); }
+    List<CheckpointRecord> getCheckpoints(String runId) { return new ArrayList<>(checkpointsByRun.getOrDefault(runId, List.of())); }
+}
+
+// -----------------------------------------------------------------------------
+// TRAINER BOT
+// -----------------------------------------------------------------------------
+
+class TrainerBot {
+    protected final RunRegistry registry;
+    protected final TrainingConfig config;
+    protected final LossFunction lossFn;
+    protected final Optimizer optimizer;
+    protected final Model model;
+    protected final Dataset dataset;
+    protected final double gradientClipNorm;
+
+    TrainerBot(RunRegistry registry, TrainingConfig config, LossFunction lossFn,
+              Optimizer optimizer, Model model, Dataset dataset) {
+        this.registry = registry;
+        this.config = config;
+        this.lossFn = lossFn;
+        this.optimizer = optimizer;
+        this.model = model;
+        this.dataset = dataset;
+        this.gradientClipNorm = config.getGradientClipNorm();
+    }
+
+    String startRun(String submitterId) {
+        byte[] configHash = hashConfig(config);
+        return registry.registerRun(submitterId, config.getMaxEpochs(), configHash);
+    }
+
+    private byte[] hashConfig(TrainingConfig c) {
+        String s = c.getMaxEpochs() + "|" + c.getBatchSize() + "|" + c.getLearningRate()
+                + "|" + c.getOptimizerName() + "|" + c.getLossName();
+        return MessageDigestHash.sha256(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
