@@ -1738,3 +1738,90 @@ final class ProximaSchedulerFactory {
 // -----------------------------------------------------------------------------
 
 final class ProximaAugmentationFactory {
+    static DataAugmentation none() { return new NoOpAugmentation(); }
+    static DataAugmentation gaussianNoise(long seed, double std) {
+        return new GaussianNoiseAugmentation(seed, std);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA INITIALIZER FACTORY
+// -----------------------------------------------------------------------------
+
+final class ProximaInitializerFactory {
+    static ParamInitializer xavier() { return new XavierInitializer(); }
+    static ParamInitializer he() { return new HeInitializer(); }
+    static ParamInitializer zero() { return new ZeroInitializer(); }
+}
+
+// -----------------------------------------------------------------------------
+// BATCH NORMALIZATION STUB (no-op for linear model)
+// -----------------------------------------------------------------------------
+
+final class BatchNormStub {
+    static void apply(double[][] batch, int dim) {
+        for (int j = 0; j < dim; j++) {
+            double sum = 0;
+            for (double[] row : batch) sum += row[j];
+            double mean = sum / batch.length;
+            double var = 0;
+            for (double[] row : batch) var += (row[j] - mean) * (row[j] - mean);
+            var = Math.sqrt(var / batch.length + 1e-5);
+            for (double[] row : batch) row[j] = (row[j] - mean) / var;
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// DROPOUT STUB (no-op for inference)
+// -----------------------------------------------------------------------------
+
+final class DropoutStub {
+    static void apply(double[] x, double p, Random rng) {
+        if (p <= 0) return;
+        for (int i = 0; i < x.length; i++) {
+            if (rng.nextDouble() < p) x[i] = 0;
+            else x[i] /= (1 - p);
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// WEIGHT DECAY STUB
+// -----------------------------------------------------------------------------
+
+final class WeightDecayStub {
+    static void apply(double[] params, double lambda) {
+        for (int i = 0; i < params.length; i++) params[i] *= (1 - lambda);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// NUMERIC STABILITY
+// -----------------------------------------------------------------------------
+
+final class NumericStability {
+    static final double EPS = 1e-8;
+    static double clamp(double x, double lo, double hi) {
+        return Math.max(lo, Math.min(hi, x));
+    }
+    static boolean isFiniteLoss(double l) {
+        return Double.isFinite(l) && !Double.isNaN(l) && l >= 0;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA VERSION INFO
+// -----------------------------------------------------------------------------
+
+final class ProximaVersionInfo {
+    static final int MAJOR = 8;
+    static final int MINOR = 0;
+    static final String NAME = "TensorProxima08";
+    static String versionString() { return NAME + " v" + MAJOR + "." + MINOR; }
+}
+
+// -----------------------------------------------------------------------------
+// EXTENDED TRAINING LOOP WITH VALIDATION
+// -----------------------------------------------------------------------------
+
