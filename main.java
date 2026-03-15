@@ -1129,3 +1129,90 @@ final class RunMetadataExporter {
             lines.add(String.format("%d,%d", c.getCheckpointIndex(), c.getAnchoredAtEpochMillis()));
         }
         Files.write(path, lines, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// WARMUP RUNNER
+// -----------------------------------------------------------------------------
+
+final class WarmupRunner {
+    static void warmup(Model model, Dataset dataset, int batchSize, int warmupBatches) {
+        int fd = dataset.featureDim();
+        int td = dataset.targetDim();
+        double[][] feat = new double[batchSize][fd];
+        double[][] tgt = new double[batchSize][td];
+        double[][] out = new double[batchSize][td];
+        for (int b = 0; b < warmupBatches; b++) {
+            int len = Math.min(batchSize, dataset.size() - b * batchSize);
+            if (len <= 0) break;
+            dataset.getBatch(b * batchSize, len, feat, tgt);
+            model.forward(feat, out);
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PARAMETER INITIALIZERS
+// -----------------------------------------------------------------------------
+
+interface ParamInitializer {
+    void init(double[] params, int inDim, int outDim, Random rng);
+}
+
+final class XavierInitializer implements ParamInitializer {
+    @Override public void init(double[] params, int inDim, int outDim, Random rng) {
+        double scale = Math.sqrt(2.0 / (inDim + outDim));
+        for (int i = 0; i < params.length; i++)
+            params[i] = (rng.nextDouble() * 2 - 1) * scale;
+    }
+}
+
+final class HeInitializer implements ParamInitializer {
+    @Override public void init(double[] params, int inDim, int outDim, Random rng) {
+        double scale = Math.sqrt(2.0 / inDim);
+        for (int i = 0; i < params.length; i++)
+            params[i] = rng.nextGaussian() * scale;
+    }
+}
+
+final class ZeroInitializer implements ParamInitializer {
+    @Override public void init(double[] params, int inDim, int outDim, Random rng) {
+        Arrays.fill(params, 0);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// LEARNING RATE FINDER (stub)
+// -----------------------------------------------------------------------------
+
+final class LRFinder {
+    private final Model model;
+    private final Dataset dataset;
+    private final LossFunction lossFn;
+    private final int batchSize;
+
+    LRFinder(Model model, Dataset dataset, LossFunction lossFn, int batchSize) {
+        this.model = model;
+        this.dataset = dataset;
+        this.lossFn = lossFn;
+        this.batchSize = batchSize;
+    }
+
+    double suggestLr(int numSteps, double startLr, double endLr) {
+        double lr = startLr;
+        double bestLr = startLr;
+        double bestLoss = Double.POSITIVE_INFINITY;
+        double mult = Math.pow(endLr / startLr, 1.0 / numSteps);
+        int fd = dataset.featureDim();
+        int td = dataset.targetDim();
+        double[][] feat = new double[batchSize][fd];
+        double[][] tgt = new double[batchSize][td];
+        double[][] out = new double[batchSize][td];
+        for (int step = 0; step < numSteps; step++) {
+            int start = (step * batchSize) % Math.max(1, dataset.size() - batchSize);
+            dataset.getBatch(start, batchSize, feat, tgt);
+            model.forward(feat, out);
+            double loss = 0;
+            for (int i = 0; i < batchSize; i++) loss += lossFn.compute(out[i], tgt[i]);
+            loss /= batchSize;
