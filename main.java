@@ -781,3 +781,90 @@ final class CheckpointManager {
         try (DataInputStream dis = new DataInputStream(Files.newInputStream(file))) {
             dis.readInt();
             dis.readInt();
+            int n = dis.readInt();
+            double[] p = new double[n];
+            for (int i = 0; i < n; i++) p[i] = dis.readDouble();
+            model.setParams(p);
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// LOGGER
+// -----------------------------------------------------------------------------
+
+final class TP08Logger {
+    private final String runId;
+    private final List<String> lines = new CopyOnWriteArrayList<>();
+
+    TP08Logger(String runId) { this.runId = runId; }
+    void log(String level, String msg) {
+        String line = Instant.now() + " [" + runId + "] [" + level + "] " + msg;
+        lines.add(line);
+        System.out.println(line);
+    }
+    void info(String msg) { log("INFO", msg); }
+    void warn(String msg) { log("WARN", msg); }
+    void error(String msg) { log("ERROR", msg); }
+    List<String> getLines() { return new ArrayList<>(lines); }
+    void writeToFile(Path path) throws IOException {
+        Files.write(path, lines, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// METRICS AGGREGATOR
+// -----------------------------------------------------------------------------
+
+final class MetricsAggregator {
+    private final List<EpochMetrics> history = new CopyOnWriteArrayList<>();
+
+    void add(EpochMetrics m) { history.add(m); }
+    double getBestLoss() {
+        return history.stream().mapToDouble(EpochMetrics::getLoss).min().orElse(Double.POSITIVE_INFINITY);
+    }
+    double getLastLoss() {
+        return history.isEmpty() ? Double.NaN : history.get(history.size() - 1).getLoss();
+    }
+    List<EpochMetrics> getHistory() { return new ArrayList<>(history); }
+}
+
+// -----------------------------------------------------------------------------
+// EARLY STOPPING
+// -----------------------------------------------------------------------------
+
+final class EarlyStoppingHandler {
+    private final int patience;
+    private final double minDelta;
+    private int waitCount = 0;
+    private double bestLoss = Double.POSITIVE_INFINITY;
+
+    EarlyStoppingHandler(int patience, double minDelta) {
+        this.patience = patience;
+        this.minDelta = minDelta;
+    }
+
+    boolean shouldStop(double currentLoss) {
+        if (currentLoss < bestLoss - minDelta) {
+            bestLoss = currentLoss;
+            waitCount = 0;
+            return false;
+        }
+        waitCount++;
+        return waitCount >= patience;
+    }
+
+    void reset() {
+        waitCount = 0;
+        bestLoss = Double.POSITIVE_INFINITY;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// VALIDATION LOOP
+// -----------------------------------------------------------------------------
+
+final class ValidationEvaluator {
+    private final Model model;
+    private final Dataset validationSet;
+    private final LossFunction lossFn;
