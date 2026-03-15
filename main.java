@@ -346,3 +346,90 @@ final class RMSpropOptimizer implements Optimizer {
             params[i] -= lr * gradients[i] / (Math.sqrt(cache[i]) + 1e-8);
         }
     }
+    @Override public String name() { return "RMSprop"; }
+}
+
+// -----------------------------------------------------------------------------
+// GRADIENT UTILS
+// -----------------------------------------------------------------------------
+
+final class GradientUtils {
+    static double norm(double[] g) {
+        double sum = 0;
+        for (double v : g) sum += v * v;
+        return Math.sqrt(sum);
+    }
+    static void clipInPlace(double[] g, double maxNorm) {
+        double n = norm(g);
+        if (n > maxNorm && n > 0) {
+            double scale = maxNorm / n;
+            for (int i = 0; i < g.length; i++) g[i] *= scale;
+        }
+    }
+    static byte[] hashForRoot(double[] gradient) {
+        ByteBuffer bb = ByteBuffer.allocate(Double.BYTES * gradient.length);
+        bb.order(ByteOrder.BIG_ENDIAN);
+        for (double v : gradient) bb.putDouble(v);
+        return Arrays.copyOf(MessageDigestHash.sha256(bb.array()), 32);
+    }
+    private GradientUtils() {}
+}
+
+final class MessageDigestHash {
+    static byte[] sha256(byte[] input) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            return md.digest(input);
+        } catch (Exception e) { throw new RuntimeException(e); }
+    }
+    private MessageDigestHash() {}
+}
+
+// -----------------------------------------------------------------------------
+// DATASET & BATCH
+// -----------------------------------------------------------------------------
+
+interface Dataset {
+    int size();
+    void getBatch(int startIdx, int count, double[][] featuresOut, double[][] targetsOut);
+    int featureDim();
+    int targetDim();
+}
+
+final class ArrayDataset implements Dataset {
+    private final double[][] features;
+    private final double[][] targets;
+    private final Random rng;
+
+    ArrayDataset(double[][] features, double[][] targets, long seed) {
+        if (features.length != targets.length || features.length == 0)
+            throw new TP08DatasetEmptyException();
+        this.features = features;
+        this.targets = targets;
+        this.rng = new Random(seed);
+    }
+
+    @Override public int size() { return features.length; }
+    @Override public int featureDim() { return features[0].length; }
+    @Override public int targetDim() { return targets[0].length; }
+
+    @Override public void getBatch(int startIdx, int count, double[][] featuresOut, double[][] targetsOut) {
+        int n = Math.min(count, features.length - startIdx);
+        for (int i = 0; i < n; i++) {
+            System.arraycopy(features[startIdx + i], 0, featuresOut[i], 0, features[0].length);
+            System.arraycopy(targets[startIdx + i], 0, targetsOut[i], 0, targets[0].length);
+        }
+    }
+
+    int[] shuffledIndices() {
+        int[] idx = new int[features.length];
+        for (int i = 0; i < idx.length; i++) idx[i] = i;
+        for (int i = idx.length - 1; i > 0; i--) {
+            int j = rng.nextInt(i + 1);
+            int t = idx[i]; idx[i] = idx[j]; idx[j] = t;
+        }
+        return idx;
+    }
+}
+
+// -----------------------------------------------------------------------------
