@@ -1303,3 +1303,90 @@ final class TP08ArgParser {
     }
 
     String get(String key, String defaultValue) {
+        return options.getOrDefault(key, defaultValue);
+    }
+
+    int getInt(String key, int defaultValue) {
+        String v = options.get(key);
+        return v != null ? Integer.parseInt(v) : defaultValue;
+    }
+
+    double getDouble(String key, double defaultValue) {
+        String v = options.get(key);
+        return v != null ? Double.parseDouble(v) : defaultValue;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// METRICS WRITER
+// -----------------------------------------------------------------------------
+
+final class MetricsWriter {
+    private final Path basePath;
+
+    MetricsWriter(Path basePath) { this.basePath = basePath; }
+
+    void writeEpochMetrics(String runId, List<EpochMetrics> metrics) throws IOException {
+        Path dir = basePath.resolve(runId);
+        Files.createDirectories(dir);
+        Path file = dir.resolve("epoch_metrics.csv");
+        List<String> lines = new ArrayList<>();
+        lines.add("epoch,loss,durationMs,batches");
+        for (EpochMetrics m : metrics) {
+            lines.add(String.format("%d,%.10f,%d,%d", m.getEpochIndex(), m.getLoss(), m.getDurationMs(), m.getBatchesProcessed()));
+        }
+        Files.write(file, lines, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// RUN SUMMARY
+// -----------------------------------------------------------------------------
+
+final class RunSummary {
+    private final String runId;
+    private final int totalEpochs;
+    private final double finalLoss;
+    private final int checkpointsAnchored;
+    private final long durationMs;
+
+    RunSummary(String runId, int totalEpochs, double finalLoss, int checkpointsAnchored, long durationMs) {
+        this.runId = runId;
+        this.totalEpochs = totalEpochs;
+        this.finalLoss = finalLoss;
+        this.checkpointsAnchored = checkpointsAnchored;
+        this.durationMs = durationMs;
+    }
+
+    String getRunId() { return runId; }
+    int getTotalEpochs() { return totalEpochs; }
+    double getFinalLoss() { return finalLoss; }
+    int getCheckpointsAnchored() { return checkpointsAnchored; }
+    long getDurationMs() { return durationMs; }
+
+    static RunSummary fromRegistry(RunRegistry registry, String runId) {
+        TrainingRunRecord r = registry.getRun(runId);
+        List<EpochRecord> epochs = registry.getEpochs(runId);
+        List<CheckpointRecord> ckpts = registry.getCheckpoints(runId);
+        double finalLoss = epochs.isEmpty() ? Double.NaN : epochs.get(epochs.size() - 1).getLoss();
+        long start = r.getRegisteredAtEpochMillis();
+        long end = epochs.isEmpty() ? start : epochs.get(epochs.size() - 1).getRecordedAtEpochMillis();
+        return new RunSummary(runId, epochs.size(), finalLoss, ckpts.size(), end - start);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// RUN FILTER
+// -----------------------------------------------------------------------------
+
+final class RunFilter {
+    static List<String> bySubmitter(RunRegistry registry, String submitterId) {
+        return registry.getAllRunIds().stream()
+                .filter(id -> registry.getRun(id).getSubmitterId().equals(submitterId))
+                .collect(Collectors.toList());
+    }
+
+    static List<String> byMinEpochs(RunRegistry registry, int minEpochs) {
+        return registry.getAllRunIds().stream()
+                .filter(id -> registry.getRun(id).getEpochsRecorded() >= minEpochs)
+                .collect(Collectors.toList());
