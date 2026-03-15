@@ -607,3 +607,90 @@ class TrainerBot {
                 + "|" + c.getOptimizerName() + "|" + c.getLossName();
         return MessageDigestHash.sha256(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
+
+    void runTraining(String runId) {
+        TrainingRunRecord r = registry.getRun(runId);
+        int batchSize = config.getBatchSize();
+        int featureDim = dataset.featureDim();
+        int targetDim = dataset.targetDim();
+        int batchCount = (dataset.size() + batchSize - 1) / batchSize;
+        double[][] batchFeatures = new double[batchSize][featureDim];
+        double[][] batchTargets = new double[batchSize][targetDim];
+        double[][] batchOutput = new double[batchSize][targetDim];
+        double[][] outputGrad = new double[batchSize][targetDim];
+        int globalStep = 0;
+        for (int epoch = 0; epoch < config.getMaxEpochs(); epoch++) {
+            long startMs = System.currentTimeMillis();
+            double epochLoss = 0;
+            int[] indices = dataset instanceof ArrayDataset
+                    ? ((ArrayDataset) dataset).shuffledIndices()
+                    : range(dataset.size());
+            for (int b = 0; b < batchCount; b++) {
+                int start = b * batchSize;
+                int len = Math.min(batchSize, dataset.size() - start);
+                if (len <= 0) continue;
+                fillBatch(dataset, indices, start, len, batchFeatures, batchTargets);
+                model.forward(batchFeatures, batchOutput);
+                double batchLoss = 0;
+                for (int i = 0; i < len; i++) {
+                    batchLoss += lossFn.compute(batchOutput[i], batchTargets[i]);
+                    lossFn.computeGradient(batchOutput[i], batchTargets[i], outputGrad[i]);
+                }
+                batchLoss /= len;
+                epochLoss += batchLoss;
+                double[] params = model.getParams();
+                double[] grad = new double[params.length];
+                model.backward(batchFeatures, outputGrad, reshapeGrad(grad, model));
+                GradientUtils.clipInPlace(grad, gradientClipNorm);
+                if (GradientUtils.norm(grad) > gradientClipNorm * 100) throw new TP08GradientExplosionException(GradientUtils.norm(grad));
+                optimizer.step(params, grad, globalStep);
+                model.setParams(params);
+                globalStep++;
+            }
+            epochLoss /= batchCount;
+            long lossScaled = (long) (epochLoss * TP08Constants.LOSS_SCALE_FACTOR);
+            byte[] gradientRoot = GradientUtils.hashForRoot(model.getParams());
+            registry.recordEpoch(runId, epoch, lossScaled, gradientRoot);
+            if ((epoch + 1) % config.getCheckpointEveryEpochs() == 0) {
+                byte[] paramBytes = new byte[model.paramCount() * Double.BYTES];
+                ByteBuffer.wrap(paramBytes).order(ByteOrder.BIG_ENDIAN).asDoubleBuffer().put(model.getParams());
+                byte[] stateHash = MessageDigestHash.sha256(paramBytes);
+                registry.anchorCheckpoint(runId, (epoch + 1) / config.getCheckpointEveryEpochs() - 1, stateHash);
+            }
+            long durationMs = System.currentTimeMillis() - startMs;
+            EpochMetrics m = new EpochMetrics(epoch, epochLoss, durationMs, batchCount);
+            if (epoch % 10 == 0) System.out.println(m);
+        }
+    }
+
+    private int[] range(int n) {
+        int[] a = new int[n];
+        for (int i = 0; i < n; i++) a[i] = i;
+        return a;
+    }
+
+    private void fillBatch(Dataset ds, int[] indices, int start, int len, double[][] featOut, double[][] tgtOut) {
+        for (int i = 0; i < len; i++) {
+            int idx = indices[start + i];
+            ds.getBatch(idx, 1, new double[][]{featOut[i]}, new double[][]{tgtOut[i]});
+        }
+    }
+
+    private double[][] reshapeGrad(double[] flat, Model model) {
+        int pc = model.paramCount();
+        int cols = (int) Math.sqrt(pc);
+        if (cols * cols != pc) cols = pc;
+        int rows = (pc + cols - 1) / cols;
+        double[][] out = new double[rows][cols];
+        for (int i = 0; i < pc; i++) out[i / cols][i % cols] = flat[i];
+        return out;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// SCHEDULER BOT (learning rate schedule)
+// -----------------------------------------------------------------------------
+
+interface LRScheduler {
+    double getLearningRate(int epoch, int step);
+}
