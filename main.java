@@ -1042,3 +1042,90 @@ final class SyntheticDatasetGenerator {
 final class LossFactory {
     static LossFunction create(String name, Object... args) {
         switch (name == null ? "MSE" : name) {
+            case "MSE": return new MSELoss();
+            case "CrossEntropy": return new CrossEntropyLoss();
+            case "Huber": return new HuberLoss(args.length > 0 ? ((Number) args[0]).doubleValue() : 1.0);
+            default: return new MSELoss();
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// OPTIMIZER FACTORY
+// -----------------------------------------------------------------------------
+
+final class OptimizerFactory {
+    static Optimizer create(String name, double lr, int paramLen, Object... args) {
+        switch (name == null ? "Adam" : name) {
+            case "SGD":
+                double momentum = args.length > 0 ? ((Number) args[0]).doubleValue() : 0.9;
+                return new SGDOptimizer(lr, momentum, paramLen);
+            case "Adam":
+                double b1 = args.length > 0 ? ((Number) args[0]).doubleValue() : 0.9;
+                double b2 = args.length > 1 ? ((Number) args[1]).doubleValue() : 0.999;
+                double eps = args.length > 2 ? ((Number) args[2]).doubleValue() : 1e-8;
+                return new AdamOptimizer(lr, b1, b2, eps, paramLen);
+            case "RMSprop":
+                double decay = args.length > 0 ? ((Number) args[0]).doubleValue() : 0.99;
+                return new RMSpropOptimizer(lr, decay, paramLen);
+            default: return new AdamOptimizer(lr, 0.9, 0.999, 1e-8, paramLen);
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// BATCH ITERATOR
+// -----------------------------------------------------------------------------
+
+final class BatchIterator implements Iterator<int[]> {
+    private final int totalSamples;
+    private final int batchSize;
+    private final int[] indices;
+    private int position = 0;
+
+    BatchIterator(int totalSamples, int batchSize, int[] indices) {
+        this.totalSamples = totalSamples;
+        this.batchSize = batchSize;
+        this.indices = indices != null ? indices : range(totalSamples);
+    }
+
+    private static int[] range(int n) {
+        int[] a = new int[n];
+        for (int i = 0; i < n; i++) a[i] = i;
+        return a;
+    }
+
+    @Override public boolean hasNext() { return position < totalSamples; }
+    @Override public int[] next() {
+        if (!hasNext()) throw new NoSuchElementException();
+        int from = position;
+        int to = Math.min(position + batchSize, totalSamples);
+        int len = to - from;
+        int[] batch = new int[len];
+        for (int i = 0; i < len; i++) batch[i] = indices[from + i];
+        position = to;
+        return batch;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// EXPORT RUN METADATA
+// -----------------------------------------------------------------------------
+
+final class RunMetadataExporter {
+    static void exportToCsv(RunRegistry registry, String runId, Path path) throws IOException {
+        List<String> lines = new ArrayList<>();
+        lines.add("epochIndex,lossScaled,loss,recordedAtMs");
+        for (EpochRecord e : registry.getEpochs(runId)) {
+            lines.add(String.format("%d,%d,%.10f,%d", e.getEpochIndex(), e.getLossScaled(), e.getLoss(), e.getRecordedAtEpochMillis()));
+        }
+        Files.write(path, lines, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    }
+
+    static void exportCheckpointsToCsv(RunRegistry registry, String runId, Path path) throws IOException {
+        List<String> lines = new ArrayList<>();
+        lines.add("checkpointIndex,anchoredAtMs");
+        for (CheckpointRecord c : registry.getCheckpoints(runId)) {
+            lines.add(String.format("%d,%d", c.getCheckpointIndex(), c.getAnchoredAtEpochMillis()));
+        }
+        Files.write(path, lines, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
