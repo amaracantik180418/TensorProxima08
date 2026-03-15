@@ -1825,3 +1825,90 @@ final class ProximaVersionInfo {
 // EXTENDED TRAINING LOOP WITH VALIDATION
 // -----------------------------------------------------------------------------
 
+final class TrainerBotWithValidation extends TrainerBot {
+    private final ValidationEvaluator validator;
+    private final EarlyStoppingHandler earlyStopping;
+    private final TrainingCallback callback;
+
+    TrainerBotWithValidation(RunRegistry registry, TrainingConfig config, LossFunction lossFn,
+                             Optimizer optimizer, Model model, Dataset dataset,
+                             ValidationEvaluator validator, EarlyStoppingHandler earlyStopping,
+                             TrainingCallback callback) {
+        super(registry, config, lossFn, optimizer, model, dataset);
+        this.validator = validator;
+        this.earlyStopping = earlyStopping;
+        this.callback = callback;
+    }
+
+    void runTrainingWithValidation(String runId) {
+        TrainingRunRecord r = registry.getRun(runId);
+        int batchSize = config.getBatchSize();
+        int featureDim = dataset.featureDim();
+        int targetDim = dataset.targetDim();
+        int batchCount = (dataset.size() + batchSize - 1) / batchSize;
+        double[][] batchFeatures = new double[batchSize][featureDim];
+        double[][] batchTargets = new double[batchSize][targetDim];
+        double[][] batchOutput = new double[batchSize][targetDim];
+        double[][] outputGrad = new double[batchSize][targetDim];
+        int globalStep = 0;
+        for (int epoch = 0; epoch < config.getMaxEpochs(); epoch++) {
+            if (callback != null) callback.onEpochStart(runId, epoch);
+            long startMs = System.currentTimeMillis();
+            double epochLoss = 0;
+            int[] indices = dataset instanceof ArrayDataset
+                    ? ((ArrayDataset) dataset).shuffledIndices()
+                    : range(dataset.size());
+            for (int b = 0; b < batchCount; b++) {
+                int start = b * batchSize;
+                int len = Math.min(batchSize, dataset.size() - start);
+                if (len <= 0) continue;
+                fillBatch(dataset, indices, start, len, batchFeatures, batchTargets);
+                model.forward(batchFeatures, batchOutput);
+                double batchLoss = 0;
+                for (int i = 0; i < len; i++) {
+                    batchLoss += lossFn.compute(batchOutput[i], batchTargets[i]);
+                    lossFn.computeGradient(batchOutput[i], batchTargets[i], outputGrad[i]);
+                }
+                batchLoss /= len;
+                epochLoss += batchLoss;
+                double[] params = model.getParams();
+                double[] grad = new double[params.length];
+                model.backward(batchFeatures, outputGrad, reshapeGrad(grad, model));
+                GradientUtils.clipInPlace(grad, config.getGradientClipNorm());
+                optimizer.step(params, grad, globalStep);
+                model.setParams(params);
+                globalStep++;
+            }
+            epochLoss /= batchCount;
+            long durationMs = System.currentTimeMillis() - startMs;
+            EpochMetrics m = new EpochMetrics(epoch, epochLoss, durationMs, batchCount);
+            if (validator != null) {
+                double valLoss = validator.evaluate();
+                if (earlyStopping != null && earlyStopping.shouldStop(valLoss)) break;
+            }
+            long lossScaled = (long) (epochLoss * TP08Constants.LOSS_SCALE_FACTOR);
+            byte[] gradientRoot = GradientUtils.hashForRoot(model.getParams());
+            registry.recordEpoch(runId, epoch, lossScaled, gradientRoot);
+            if ((epoch + 1) % config.getCheckpointEveryEpochs() == 0) {
+                byte[] paramBytes = new byte[model.paramCount() * Double.BYTES];
+                ByteBuffer.wrap(paramBytes).order(ByteOrder.BIG_ENDIAN).asDoubleBuffer().put(model.getParams());
+                registry.anchorCheckpoint(runId, (epoch + 1) / config.getCheckpointEveryEpochs() - 1, MessageDigestHash.sha256(paramBytes));
+                if (callback != null) callback.onCheckpoint(runId, (epoch + 1) / config.getCheckpointEveryEpochs() - 1);
+            }
+            if (callback != null) callback.onEpochEnd(runId, epoch, m);
+        }
+        if (callback != null) callback.onRunComplete(runId);
+    }
+
+    private int[] range(int n) {
+        int[] a = new int[n];
+        for (int i = 0; i < n; i++) a[i] = i;
+        return a;
+    }
+    private void fillBatch(Dataset ds, int[] indices, int start, int len, double[][] featOut, double[][] tgtOut) {
+        for (int i = 0; i < len; i++) {
+            int idx = indices[start + i];
+            ds.getBatch(idx, 1, new double[][]{featOut[i]}, new double[][]{tgtOut[i]});
+        }
+    }
+    private double[][] reshapeGrad(double[] flat, Model model) {
