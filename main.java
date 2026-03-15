@@ -1651,3 +1651,90 @@ final class EpochRecordListHelpers {
 
     static double maxLoss(List<EpochRecord> records) {
         return records.stream().mapToDouble(EpochRecord::getLoss).max().orElse(Double.NaN);
+    }
+
+    static double averageLoss(List<EpochRecord> records) {
+        if (records.isEmpty()) return Double.NaN;
+        return records.stream().mapToDouble(EpochRecord::getLoss).average().orElse(Double.NaN);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// CHECKPOINT RECORD LIST HELPERS
+// -----------------------------------------------------------------------------
+
+final class CheckpointRecordListHelpers {
+    static int[] indices(List<CheckpointRecord> records) {
+        return records.stream().mapToInt(CheckpointRecord::getCheckpointIndex).toArray();
+    }
+
+    static long[] anchoredAtMs(List<CheckpointRecord> records) {
+        return records.stream().mapToLong(CheckpointRecord::getAnchoredAtEpochMillis).toArray();
+    }
+}
+
+// -----------------------------------------------------------------------------
+// THREAD-SAFE RUN REGISTRY DELEGATE
+// -----------------------------------------------------------------------------
+
+final class ThreadSafeRunRegistryDelegate {
+    private final RunRegistry registry;
+    private final Object lock = new Object();
+
+    ThreadSafeRunRegistryDelegate(RunRegistry registry) { this.registry = registry; }
+
+    String registerRunSafe(String submitterId, int epochCount, byte[] configHash) {
+        synchronized (lock) { return registry.registerRun(submitterId, epochCount, configHash); }
+    }
+
+    TrainingRunRecord getRunSafe(String runId) {
+        synchronized (lock) { return registry.getRun(runId); }
+    }
+
+    List<String> getAllRunIdsSafe() {
+        synchronized (lock) { return registry.getAllRunIds(); }
+    }
+
+    int totalRunsSafe() {
+        synchronized (lock) { return registry.totalRuns(); }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA BOT FACTORY
+// -----------------------------------------------------------------------------
+
+final class ProximaBotFactory {
+    static TrainerBot createTrainerBot(RunRegistry registry, TrainingConfig config,
+                                      Dataset dataset, Model model) {
+        LossFunction loss = LossFactory.create(config.getLossName());
+        Optimizer opt = OptimizerFactory.create(config.getOptimizerName(), config.getLearningRate(), model.paramCount());
+        return new TrainerBot(registry, config, loss, opt, model, dataset);
+    }
+
+    static TrainerBot createTrainerBotWithLoss(RunRegistry registry, TrainingConfig config,
+                                               LossFunction loss, Dataset dataset, Model model) {
+        Optimizer opt = OptimizerFactory.create(config.getOptimizerName(), config.getLearningRate(), model.paramCount());
+        return new TrainerBot(registry, config, loss, opt, model, dataset);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA SCHEDULER FACTORY
+// -----------------------------------------------------------------------------
+
+final class ProximaSchedulerFactory {
+    static LRScheduler step(double lr, int stepSize, double gamma) {
+        return new StepLRScheduler(lr, stepSize, gamma);
+    }
+
+    static LRScheduler cosine(double lr, int totalSteps) {
+        return new CosineAnnealingScheduler(lr, totalSteps);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA AUGMENTATION FACTORY
+// -----------------------------------------------------------------------------
+
+final class ProximaAugmentationFactory {
