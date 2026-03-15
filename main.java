@@ -868,3 +868,90 @@ final class ValidationEvaluator {
     private final Model model;
     private final Dataset validationSet;
     private final LossFunction lossFn;
+
+    ValidationEvaluator(Model model, Dataset validationSet, LossFunction lossFn) {
+        this.model = model;
+        this.validationSet = validationSet;
+        this.lossFn = lossFn;
+    }
+
+    double evaluate() {
+        int n = validationSet.size();
+        if (n == 0) return Double.NaN;
+        double[][] feat = new double[1][validationSet.featureDim()];
+        double[][] tgt = new double[1][validationSet.targetDim()];
+        double[][] out = new double[1][validationSet.targetDim()];
+        double sum = 0;
+        for (int i = 0; i < n; i++) {
+            validationSet.getBatch(i, 1, feat, tgt);
+            model.forward(feat, out);
+            sum += lossFn.compute(out[0], tgt[0]);
+        }
+        return sum / n;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// CALLBACK INTERFACE
+// -----------------------------------------------------------------------------
+
+interface TrainingCallback {
+    void onEpochStart(String runId, int epoch);
+    void onEpochEnd(String runId, int epoch, EpochMetrics metrics);
+    void onCheckpoint(String runId, int checkpointIndex);
+    void onRunComplete(String runId);
+}
+
+final class LoggingCallback implements TrainingCallback {
+    private final TP08Logger logger;
+    LoggingCallback(TP08Logger logger) { this.logger = logger; }
+    @Override public void onEpochStart(String runId, int epoch) { logger.info("Epoch start: " + epoch); }
+    @Override public void onEpochEnd(String runId, int epoch, EpochMetrics metrics) { logger.info("Epoch end: " + metrics); }
+    @Override public void onCheckpoint(String runId, int checkpointIndex) { logger.info("Checkpoint: " + checkpointIndex); }
+    @Override public void onRunComplete(String runId) { logger.info("Run complete: " + runId); }
+}
+
+final class CompositeCallback implements TrainingCallback {
+    private final List<TrainingCallback> callbacks = new ArrayList<>();
+    void add(TrainingCallback c) { callbacks.add(c); }
+    @Override public void onEpochStart(String runId, int epoch) { for (TrainingCallback c : callbacks) c.onEpochStart(runId, epoch); }
+    @Override public void onEpochEnd(String runId, int epoch, EpochMetrics metrics) { for (TrainingCallback c : callbacks) c.onEpochEnd(runId, epoch, metrics); }
+    @Override public void onCheckpoint(String runId, int checkpointIndex) { for (TrainingCallback c : callbacks) c.onCheckpoint(runId, checkpointIndex); }
+    @Override public void onRunComplete(String runId) { for (TrainingCallback c : callbacks) c.onRunComplete(runId); }
+}
+
+// -----------------------------------------------------------------------------
+// CONFIG SERIALIZER
+// -----------------------------------------------------------------------------
+
+final class ConfigSerializer {
+    static String toJson(TrainingConfig c) {
+        return String.format(
+            "{\"maxEpochs\":%d,\"batchSize\":%d,\"learningRate\":%.10f,\"gradientClipNorm\":%.4f," +
+            "\"checkpointEveryEpochs\":%d,\"randomSeed\":%d,\"optimizerName\":\"%s\",\"lossName\":\"%s\"}",
+            c.getMaxEpochs(), c.getBatchSize(), c.getLearningRate(), c.getGradientClipNorm(),
+            c.getCheckpointEveryEpochs(), c.getRandomSeed(), c.getOptimizerName(), c.getLossName()
+        );
+    }
+
+    static TrainingConfig fromJson(String json) {
+        Map<String, String> m = parseSimpleJson(json);
+        return TrainingConfig.builder()
+                .maxEpochs(Integer.parseInt(m.getOrDefault("maxEpochs", String.valueOf(TP08Constants.MAX_EPOCHS_DEFAULT))))
+                .batchSize(Integer.parseInt(m.getOrDefault("batchSize", String.valueOf(TP08Constants.BATCH_SIZE_DEFAULT))))
+                .learningRate(Double.parseDouble(m.getOrDefault("learningRate", String.valueOf(TP08Constants.LEARNING_RATE_DEFAULT))))
+                .gradientClipNorm(Double.parseDouble(m.getOrDefault("gradientClipNorm", String.valueOf(TP08Constants.GRADIENT_CLIP_NORM))))
+                .checkpointEveryEpochs(Integer.parseInt(m.getOrDefault("checkpointEveryEpochs", String.valueOf(TP08Constants.CHECKPOINT_EVERY_EPOCHS))))
+                .randomSeed(Long.parseLong(m.getOrDefault("randomSeed", String.valueOf(TP08Constants.RANDOM_SEED_BASE))))
+                .optimizerName(m.getOrDefault("optimizerName", "Adam"))
+                .lossName(m.getOrDefault("lossName", "MSE"))
+                .build();
+    }
+
+    private static Map<String, String> parseSimpleJson(String json) {
+        Map<String, String> out = new HashMap<>();
+        Pattern p = Pattern.compile("\"(\\w+)\"\\s*:\\s*(\"[^\"]*\"|\\d+\\.?\\d*|true|false)");
+        Matcher matcher = p.matcher(json);
+        while (matcher.find()) {
+            String val = matcher.group(2);
+            if (val.startsWith("\"")) val = val.substring(1, val.length() - 1);
