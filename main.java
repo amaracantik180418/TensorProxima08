@@ -694,3 +694,90 @@ class TrainerBot {
 interface LRScheduler {
     double getLearningRate(int epoch, int step);
 }
+
+final class StepLRScheduler implements LRScheduler {
+    private final double initialLr;
+    private final int stepSize;
+    private final double gamma;
+    StepLRScheduler(double initialLr, int stepSize, double gamma) {
+        this.initialLr = initialLr;
+        this.stepSize = stepSize;
+        this.gamma = gamma;
+    }
+    @Override public double getLearningRate(int epoch, int step) {
+        int s = epoch * 1000 + step;
+        return initialLr * Math.pow(gamma, s / stepSize);
+    }
+}
+
+final class CosineAnnealingScheduler implements LRScheduler {
+    private final double initialLr;
+    private final int totalSteps;
+    CosineAnnealingScheduler(double initialLr, int totalSteps) {
+        this.initialLr = initialLr;
+        this.totalSteps = totalSteps;
+    }
+    @Override public double getLearningRate(int epoch, int step) {
+        int s = epoch * 1000 + step;
+        if (s >= totalSteps) return initialLr * 0.01;
+        return 0.5 * initialLr * (1 + Math.cos(Math.PI * s / totalSteps));
+    }
+}
+
+// -----------------------------------------------------------------------------
+// DATA AUGMENTATION (stub)
+// -----------------------------------------------------------------------------
+
+interface DataAugmentation {
+    void apply(double[] feature);
+}
+
+final class NoOpAugmentation implements DataAugmentation {
+    @Override public void apply(double[] feature) {}
+}
+
+final class GaussianNoiseAugmentation implements DataAugmentation {
+    private final Random rng;
+    private final double std;
+    GaussianNoiseAugmentation(long seed, double std) {
+        this.rng = new Random(seed);
+        this.std = std;
+    }
+    @Override public void apply(double[] feature) {
+        for (int i = 0; i < feature.length; i++)
+            feature[i] += rng.nextGaussian() * std;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// CHECKPOINT MANAGER
+// -----------------------------------------------------------------------------
+
+final class CheckpointManager {
+    private final String baseDir;
+    private final RunRegistry registry;
+
+    CheckpointManager(String baseDir, RunRegistry registry) {
+        this.baseDir = baseDir;
+        this.registry = registry;
+    }
+
+    void saveCheckpoint(String runId, int checkpointIndex, Model model, TrainingConfig config) throws IOException {
+        Path dir = Paths.get(baseDir, runId);
+        Files.createDirectories(dir);
+        Path file = dir.resolve("ckpt_" + checkpointIndex + ".bin");
+        try (DataOutputStream dos = new DataOutputStream(Files.newOutputStream(file))) {
+            dos.writeInt(config.getMaxEpochs());
+            dos.writeInt(config.getBatchSize());
+            double[] p = model.getParams();
+            dos.writeInt(p.length);
+            for (double v : p) dos.writeDouble(v);
+        }
+    }
+
+    void loadCheckpoint(String runId, int checkpointIndex, Model model) throws IOException {
+        Path file = Paths.get(baseDir, runId, "ckpt_" + checkpointIndex + ".bin");
+        if (!Files.exists(file)) throw new TP08CheckpointException("File not found: " + file);
+        try (DataInputStream dis = new DataInputStream(Files.newInputStream(file))) {
+            dis.readInt();
+            dis.readInt();
