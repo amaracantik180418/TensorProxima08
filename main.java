@@ -1564,3 +1564,90 @@ public final class TensorProxima08 {
     public static Optimizer createOptimizer(String name, double lr, int paramLen) {
         return OptimizerFactory.create(name, lr, paramLen);
     }
+
+    public static ArrayDataset syntheticLinear(int n, int fd, int td, long seed) {
+        return new SyntheticDatasetGenerator(seed).generateLinear(n, fd, td);
+    }
+
+    public static ArrayDataset syntheticRandom(int n, int fd, int td, long seed) {
+        return new SyntheticDatasetGenerator(seed).generateRandom(n, fd, td);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA RUN VALIDATOR
+// -----------------------------------------------------------------------------
+
+final class ProximaRunValidator {
+    static boolean isValidRunId(String runId) {
+        return runId != null && runId.startsWith(TP08Constants.RUN_ID_PREFIX) && runId.length() >= 20;
+    }
+
+    static void validateEpochIndex(int index, int maxEpochs) {
+        if (index < 0 || index >= maxEpochs) throw new TP08EpochIndexException(index, maxEpochs);
+    }
+
+    static void validateConfig(TrainingConfig c) {
+        if (c.getMaxEpochs() <= 0) throw new TP08ConfigValidationException("maxEpochs");
+        if (c.getBatchSize() <= 0) throw new TP08ConfigValidationException("batchSize");
+        if (c.getLearningRate() <= 0 || !Double.isFinite(c.getLearningRate())) throw new TP08ConfigValidationException("learningRate");
+        if (c.getGradientClipNorm() <= 0) throw new TP08ConfigValidationException("gradientClipNorm");
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA CONFIG BUILDER EXT
+// -----------------------------------------------------------------------------
+
+final class ProximaConfigBuilderExt {
+    private int maxEpochs = 50;
+    private int batchSize = 24;
+    private double learningRate = 0.001;
+    private double gradientClipNorm = 4.0;
+    private int checkpointEvery = 5;
+    private long seed = System.nanoTime();
+    private String optimizer = "Adam";
+    private String loss = "MSE";
+
+    ProximaConfigBuilderExt maxEpochs(int v) { this.maxEpochs = v; return this; }
+    ProximaConfigBuilderExt batchSize(int v) { this.batchSize = v; return this; }
+    ProximaConfigBuilderExt learningRate(double v) { this.learningRate = v; return this; }
+    ProximaConfigBuilderExt gradientClipNorm(double v) { this.gradientClipNorm = v; return this; }
+    ProximaConfigBuilderExt checkpointEvery(int v) { this.checkpointEvery = v; return this; }
+    ProximaConfigBuilderExt seed(long v) { this.seed = v; return this; }
+    ProximaConfigBuilderExt optimizer(String v) { this.optimizer = v; return this; }
+    ProximaConfigBuilderExt loss(String v) { this.loss = v; return this; }
+
+    TrainingConfig build() {
+        return TrainingConfig.builder()
+                .maxEpochs(maxEpochs)
+                .batchSize(batchSize)
+                .learningRate(learningRate)
+                .gradientClipNorm(gradientClipNorm)
+                .checkpointEveryEpochs(checkpointEvery)
+                .randomSeed(seed)
+                .optimizerName(optimizer)
+                .lossName(loss)
+                .build();
+    }
+}
+
+// -----------------------------------------------------------------------------
+// EPOCH RECORD LIST HELPERS
+// -----------------------------------------------------------------------------
+
+final class EpochRecordListHelpers {
+    static double[] extractLosses(List<EpochRecord> records) {
+        return records.stream().mapToDouble(EpochRecord::getLoss).toArray();
+    }
+
+    static long[] extractTimestamps(List<EpochRecord> records) {
+        return records.stream().mapToLong(EpochRecord::getRecordedAtEpochMillis).toArray();
+    }
+
+    static double minLoss(List<EpochRecord> records) {
+        return records.stream().mapToDouble(EpochRecord::getLoss).min().orElse(Double.NaN);
+    }
+
+    static double maxLoss(List<EpochRecord> records) {
+        return records.stream().mapToDouble(EpochRecord::getLoss).max().orElse(Double.NaN);
