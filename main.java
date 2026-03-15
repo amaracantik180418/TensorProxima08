@@ -955,3 +955,90 @@ final class ConfigSerializer {
         while (matcher.find()) {
             String val = matcher.group(2);
             if (val.startsWith("\"")) val = val.substring(1, val.length() - 1);
+            out.put(matcher.group(1), val);
+        }
+        return out;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// RUN COMPARATOR
+// -----------------------------------------------------------------------------
+
+final class RunComparator {
+    private final RunRegistry registry;
+
+    RunComparator(RunRegistry registry) { this.registry = registry; }
+
+    String getBestRunByLoss(List<String> runIds) {
+        if (runIds.isEmpty()) return null;
+        String best = runIds.get(0);
+        double bestLoss = Double.POSITIVE_INFINITY;
+        for (String id : runIds) {
+            List<EpochRecord> epochs = registry.getEpochs(id);
+            if (epochs.isEmpty()) continue;
+            double last = epochs.get(epochs.size() - 1).getLoss();
+            if (last < bestLoss) {
+                bestLoss = last;
+                best = id;
+            }
+        }
+        return best;
+    }
+
+    Map<String, Double> getFinalLossPerRun(List<String> runIds) {
+        Map<String, Double> out = new HashMap<>();
+        for (String id : runIds) {
+            List<EpochRecord> epochs = registry.getEpochs(id);
+            if (epochs.isEmpty()) out.put(id, Double.NaN);
+            else out.put(id, epochs.get(epochs.size() - 1).getLoss());
+        }
+        return out;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// SYNTHETIC DATASET GENERATOR
+// -----------------------------------------------------------------------------
+
+final class SyntheticDatasetGenerator {
+    private final Random rng;
+
+    SyntheticDatasetGenerator(long seed) { this.rng = new Random(seed); }
+
+    ArrayDataset generateLinear(int numSamples, int featureDim, int targetDim) {
+        double[][] w = new double[targetDim][featureDim + 1];
+        for (int i = 0; i < targetDim; i++)
+            for (int j = 0; j <= featureDim; j++)
+                w[i][j] = rng.nextDouble() * 2 - 1;
+        double[][] features = new double[numSamples][featureDim];
+        double[][] targets = new double[numSamples][targetDim];
+        for (int i = 0; i < numSamples; i++) {
+            for (int j = 0; j < featureDim; j++) features[i][j] = rng.nextDouble() * 2 - 1;
+            for (int o = 0; o < targetDim; o++) {
+                double sum = w[o][featureDim];
+                for (int j = 0; j < featureDim; j++) sum += features[i][j] * w[o][j];
+                targets[i][o] = sum + 0.1 * rng.nextGaussian();
+            }
+        }
+        return new ArrayDataset(features, targets, rng.nextLong());
+    }
+
+    ArrayDataset generateRandom(int numSamples, int featureDim, int targetDim) {
+        double[][] features = new double[numSamples][featureDim];
+        double[][] targets = new double[numSamples][targetDim];
+        for (int i = 0; i < numSamples; i++) {
+            for (int j = 0; j < featureDim; j++) features[i][j] = rng.nextDouble();
+            for (int j = 0; j < targetDim; j++) targets[i][j] = rng.nextDouble();
+        }
+        return new ArrayDataset(features, targets, rng.nextLong());
+    }
+}
+
+// -----------------------------------------------------------------------------
+// LOSS FACTORY
+// -----------------------------------------------------------------------------
+
+final class LossFactory {
+    static LossFunction create(String name, Object... args) {
+        switch (name == null ? "MSE" : name) {
