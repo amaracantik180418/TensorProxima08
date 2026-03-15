@@ -259,3 +259,90 @@ final class HuberLoss implements LossFunction {
         double sum = 0;
         for (int i = 0; i < pred.length; i++) {
             double d = pred[i] - target[i];
+            double abs = Math.abs(d);
+            sum += abs <= delta ? 0.5 * d * d : delta * (abs - 0.5 * delta);
+        }
+        return sum / pred.length;
+    }
+    @Override public void computeGradient(double[] pred, double[] target, double[] gradientOut) {
+        int n = pred.length;
+        for (int i = 0; i < n; i++) {
+            double d = pred[i] - target[i];
+            if (Math.abs(d) <= delta) gradientOut[i] = d / n;
+            else gradientOut[i] = (delta * Math.signum(d)) / n;
+        }
+    }
+    @Override public String name() { return "Huber"; }
+}
+
+// -----------------------------------------------------------------------------
+// OPTIMIZER INTERFACE & IMPLEMENTATIONS
+// -----------------------------------------------------------------------------
+
+interface Optimizer {
+    void step(double[] params, double[] gradients, int stepIndex);
+    String name();
+}
+
+final class SGDOptimizer implements Optimizer {
+    private final double lr;
+    private final double momentum;
+    private final double[] velocity;
+    SGDOptimizer(double lr, double momentum, int paramLen) {
+        this.lr = lr;
+        this.momentum = momentum;
+        this.velocity = new double[paramLen];
+    }
+    @Override public void step(double[] params, double[] gradients, int stepIndex) {
+        for (int i = 0; i < params.length; i++) {
+            velocity[i] = momentum * velocity[i] + gradients[i];
+            params[i] -= lr * velocity[i];
+        }
+    }
+    @Override public String name() { return "SGD"; }
+}
+
+final class AdamOptimizer implements Optimizer {
+    private final double lr;
+    private final double beta1;
+    private final double beta2;
+    private final double eps;
+    private final double[] m;
+    private final double[] v;
+    private int t = 0;
+    AdamOptimizer(double lr, double beta1, double beta2, double eps, int paramLen) {
+        this.lr = lr;
+        this.beta1 = beta1;
+        this.beta2 = beta2;
+        this.eps = eps;
+        this.m = new double[paramLen];
+        this.v = new double[paramLen];
+    }
+    @Override public void step(double[] params, double[] gradients, int stepIndex) {
+        t++;
+        for (int i = 0; i < params.length; i++) {
+            m[i] = beta1 * m[i] + (1 - beta1) * gradients[i];
+            v[i] = beta2 * v[i] + (1 - beta2) * gradients[i] * gradients[i];
+            double mHat = m[i] / (1 - Math.pow(beta1, t));
+            double vHat = v[i] / (1 - Math.pow(beta2, t));
+            params[i] -= lr * mHat / (Math.sqrt(vHat) + eps);
+        }
+    }
+    @Override public String name() { return "Adam"; }
+}
+
+final class RMSpropOptimizer implements Optimizer {
+    private final double lr;
+    private final double decay;
+    private final double[] cache;
+    RMSpropOptimizer(double lr, double decay, int paramLen) {
+        this.lr = lr;
+        this.decay = decay;
+        this.cache = new double[paramLen];
+    }
+    @Override public void step(double[] params, double[] gradients, int stepIndex) {
+        for (int i = 0; i < params.length; i++) {
+            cache[i] = decay * cache[i] + (1 - decay) * gradients[i] * gradients[i];
+            params[i] -= lr * gradients[i] / (Math.sqrt(cache[i]) + 1e-8);
+        }
+    }
