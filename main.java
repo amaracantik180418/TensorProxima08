@@ -433,3 +433,90 @@ final class ArrayDataset implements Dataset {
 }
 
 // -----------------------------------------------------------------------------
+// MODEL INTERFACE (simple linear for demo)
+// -----------------------------------------------------------------------------
+
+interface Model {
+    void forward(double[][] input, double[][] output);
+    void backward(double[][] input, double[][] outputGrad, double[][] paramGrad);
+    double[] getParams();
+    void setParams(double[] params);
+    int paramCount();
+}
+
+final class LinearModel implements Model {
+    private final int inDim;
+    private final int outDim;
+    private final double[] params; // [outDim * (inDim + 1)]: row-major weight then bias
+    private double[][] lastInput;
+
+    LinearModel(int inDim, int outDim, Random rng) {
+        this.inDim = inDim;
+        this.outDim = outDim;
+        this.params = new double[outDim * (inDim + 1)];
+        double scale = 1.0 / Math.sqrt(inDim + 1);
+        for (int i = 0; i < params.length; i++)
+            params[i] = (rng.nextDouble() * 2 - 1) * scale;
+    }
+
+    @Override public int paramCount() { return params.length; }
+    @Override public double[] getParams() { return params.clone(); }
+    @Override public void setParams(double[] p) { System.arraycopy(p, 0, params, 0, Math.min(p.length, params.length)); }
+
+    @Override public void forward(double[][] input, double[][] output) {
+        lastInput = input;
+        int batch = input.length;
+        for (int b = 0; b < batch; b++) {
+            for (int o = 0; o < outDim; o++) {
+                double sum = params[outDim * (inDim + 1) - outDim + o];
+                for (int i = 0; i < inDim; i++)
+                    sum += input[b][i] * params[o * (inDim + 1) + i];
+                output[b][o] = sum;
+            }
+        }
+    }
+
+    @Override public void backward(double[][] input, double[][] outputGrad, double[][] paramGrad) {
+        int batch = input.length;
+        Arrays.stream(paramGrad).forEach(r -> Arrays.fill(r, 0));
+        for (int b = 0; b < batch; b++) {
+            for (int o = 0; o < outDim; o++) {
+                double g = outputGrad[b][o];
+                for (int i = 0; i < inDim; i++)
+                    paramGrad[o][i] += g * input[b][i];
+                paramGrad[o][inDim] += g;
+            }
+        }
+        for (int o = 0; o < outDim; o++)
+            for (int i = 0; i <= inDim; i++)
+                paramGrad[o][i] /= batch;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// METRICS
+// -----------------------------------------------------------------------------
+
+final class EpochMetrics {
+    private final int epochIndex;
+    private final double loss;
+    private final long durationMs;
+    private final int batchesProcessed;
+
+    EpochMetrics(int epochIndex, double loss, long durationMs, int batchesProcessed) {
+        this.epochIndex = epochIndex;
+        this.loss = loss;
+        this.durationMs = durationMs;
+        this.batchesProcessed = batchesProcessed;
+    }
+    int getEpochIndex() { return epochIndex; }
+    double getLoss() { return loss; }
+    long getDurationMs() { return durationMs; }
+    int getBatchesProcessed() { return batchesProcessed; }
+    @Override public String toString() {
+        return String.format("EpochMetrics{epoch=%d, loss=%.6f, durationMs=%d, batches=%d}",
+                epochIndex, loss, durationMs, batchesProcessed);
+    }
+}
+
+// -----------------------------------------------------------------------------
