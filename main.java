@@ -1477,3 +1477,90 @@ public final class TensorProxima08 {
 
     public static TrainingConfig defaultConfig() {
         return TrainingConfig.builder().build();
+    }
+
+    public static TrainingConfig configWithEpochs(int epochs) {
+        return TrainingConfig.builder().maxEpochs(epochs).build();
+    }
+
+    public static String generateRunId() {
+        return TP08Constants.RUN_ID_PREFIX + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+    }
+
+    public static byte[] hashBytes(byte[] input) {
+        return MessageDigestHash.sha256(input);
+    }
+
+    public static double[] copyParams(Model model) {
+        return model.getParams();
+    }
+
+    public static EpochMetrics metricsOf(int epoch, double loss, long durationMs, int batches) {
+        return new EpochMetrics(epoch, loss, durationMs, batches);
+    }
+
+    public static List<String> runIdsFromRegistry(RunRegistry r) {
+        return r.getAllRunIds();
+    }
+
+    public static void archiveRunSafe(RunRegistry r, String runId) {
+        try { r.archiveRun(runId); } catch (Exception ignored) {}
+    }
+
+    public static boolean runExists(RunRegistry r, String runId) {
+        try { r.getRun(runId); return true; } catch (TP08RunNotFoundException e) { return false; }
+    }
+
+    public static int epochCountForRun(RunRegistry r, String runId) {
+        return r.getEpochs(runId).size();
+    }
+
+    public static int checkpointCountForRun(RunRegistry r, String runId) {
+        return r.getCheckpoints(runId).size();
+    }
+
+    public static double finalLossForRun(RunRegistry r, String runId) {
+        List<EpochRecord> epochs = r.getEpochs(runId);
+        return epochs.isEmpty() ? Double.NaN : epochs.get(epochs.size() - 1).getLoss();
+    }
+
+    public static RunSummary buildSummary(RunRegistry r, String runId) {
+        return RunSummary.fromRegistry(r, runId);
+    }
+
+    public static List<RunSummary> summariesForAll(RunRegistry r) {
+        return r.getAllRunIds().stream()
+                .map(id -> RunSummary.fromRegistry(r, id))
+                .collect(Collectors.toList());
+    }
+
+    public static String bestRunId(List<RunSummary> summaries) {
+        return summaries.stream()
+                .min(Comparator.comparingDouble(RunSummary::getFinalLoss))
+                .map(RunSummary::getRunId)
+                .orElse(null);
+    }
+
+    public static void exportRunCsv(RunRegistry r, String runId, String path) throws IOException {
+        RunMetadataExporter.exportToCsv(r, runId, Paths.get(path));
+    }
+
+    public static void exportCheckpointsCsv(RunRegistry r, String runId, String path) throws IOException {
+        RunMetadataExporter.exportCheckpointsToCsv(r, runId, Paths.get(path));
+    }
+
+    public static TrainingConfig configFromJson(String json) {
+        return ConfigSerializer.fromJson(json);
+    }
+
+    public static String configToJson(TrainingConfig c) {
+        return ConfigSerializer.toJson(c);
+    }
+
+    public static LossFunction createLoss(String name) {
+        return LossFactory.create(name);
+    }
+
+    public static Optimizer createOptimizer(String name, double lr, int paramLen) {
+        return OptimizerFactory.create(name, lr, paramLen);
+    }
