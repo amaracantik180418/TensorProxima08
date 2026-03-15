@@ -1216,3 +1216,90 @@ final class LRFinder {
             double loss = 0;
             for (int i = 0; i < batchSize; i++) loss += lossFn.compute(out[i], tgt[i]);
             loss /= batchSize;
+            if (loss < bestLoss) {
+                bestLoss = loss;
+                bestLr = lr;
+            }
+            lr *= mult;
+        }
+        return bestLr;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// GRADIENT ACCUMULATION
+// -----------------------------------------------------------------------------
+
+final class GradientAccumulator {
+    private final double[] accumulated;
+    private int count = 0;
+
+    GradientAccumulator(int paramLen) { this.accumulated = new double[paramLen]; }
+
+    void add(double[] grad) {
+        for (int i = 0; i < accumulated.length; i++) accumulated[i] += grad[i];
+        count++;
+    }
+
+    void getAverage(double[] out) {
+        if (count == 0) return;
+        for (int i = 0; i < accumulated.length; i++) out[i] = accumulated[i] / count;
+    }
+
+    void reset() {
+        Arrays.fill(accumulated, 0);
+        count = 0;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// MULTI-RUN BATCH RUNNER
+// -----------------------------------------------------------------------------
+
+final class MultiRunBatchRunner {
+    private final RunRegistry registry;
+    private final TrainingConfig config;
+    private final SyntheticDatasetGenerator dataGen;
+    private final int numRuns;
+
+    MultiRunBatchRunner(RunRegistry registry, TrainingConfig config, int numRuns) {
+        this.registry = registry;
+        this.config = config;
+        this.dataGen = new SyntheticDatasetGenerator(config.getRandomSeed());
+        this.numRuns = numRuns;
+    }
+
+    List<String> runAll(int featureDim, int targetDim, int numSamples) {
+        List<String> runIds = new ArrayList<>();
+        LossFunction lossFn = LossFactory.create(config.getLossName());
+        for (int r = 0; r < numRuns; r++) {
+            ArrayDataset ds = dataGen.generateRandom(numSamples, featureDim, targetDim);
+            Random rng = new Random(config.getRandomSeed() + r * 9973);
+            Model model = new LinearModel(featureDim, targetDim, rng);
+            Optimizer opt = OptimizerFactory.create(config.getOptimizerName(), config.getLearningRate(), model.paramCount());
+            TrainerBot bot = new TrainerBot(registry, config, lossFn, opt, model, ds);
+            String runId = bot.startRun("batch_submitter_" + r);
+            bot.runTraining(runId);
+            runIds.add(runId);
+        }
+        return runIds;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// CLI ARG PARSER (stub)
+// -----------------------------------------------------------------------------
+
+final class TP08ArgParser {
+    private final Map<String, String> options = new HashMap<>();
+
+    TP08ArgParser(String[] args) {
+        for (int i = 0; i < args.length; i++) {
+            if (args[i].startsWith("--") && i + 1 < args.length) {
+                options.put(args[i].substring(2), args[i + 1]);
+                i++;
+            }
+        }
+    }
+
+    String get(String key, String defaultValue) {
