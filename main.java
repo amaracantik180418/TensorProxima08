@@ -1912,3 +1912,90 @@ final class TrainerBotWithValidation extends TrainerBot {
         }
     }
     private double[][] reshapeGrad(double[] flat, Model model) {
+        int pc = model.paramCount();
+        int cols = (int) Math.sqrt(pc);
+        if (cols * cols != pc) cols = pc;
+        int rows = (pc + cols - 1) / cols;
+        double[][] out = new double[rows][cols];
+        for (int i = 0; i < pc; i++) out[i / cols][i % cols] = flat[i];
+        return out;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// TRAINER BOT REFLECTION (access for subclass)
+// -----------------------------------------------------------------------------
+
+class TrainerBotReflection {
+    static RunRegistry getRegistry(TrainerBot bot) throws Exception {
+        java.lang.reflect.Field f = TrainerBot.class.getDeclaredField("registry");
+        f.setAccessible(true);
+        return (RunRegistry) f.get(bot);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA REPORTER
+// -----------------------------------------------------------------------------
+
+final class ProximaReporter {
+    private final RunRegistry registry;
+    private final TP08Logger logger;
+
+    ProximaReporter(RunRegistry registry, TP08Logger logger) {
+        this.registry = registry;
+        this.logger = logger;
+    }
+
+    void reportRun(String runId) {
+        TrainingRunRecord r = registry.getRun(runId);
+        logger.info("Run " + runId + " submitter=" + r.getSubmitterId() + " epochs=" + r.getEpochCount());
+        List<EpochRecord> epochs = registry.getEpochs(runId);
+        if (!epochs.isEmpty()) {
+            double first = epochs.get(0).getLoss();
+            double last = epochs.get(epochs.size() - 1).getLoss();
+            logger.info("  first loss=" + first + " last loss=" + last);
+        }
+        logger.info("  checkpoints=" + registry.getCheckpoints(runId).size());
+    }
+
+    void reportAllRuns() {
+        for (String id : registry.getAllRunIds()) reportRun(id);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA RUN ID GENERATOR
+// -----------------------------------------------------------------------------
+
+final class ProximaRunIdGenerator {
+    private final String prefix;
+    private final AtomicLong counter = new AtomicLong(0);
+
+    ProximaRunIdGenerator(String prefix) { this.prefix = prefix != null ? prefix : TP08Constants.RUN_ID_PREFIX; }
+
+    String next() {
+        return prefix + String.format("%016x", counter.incrementAndGet()) + Long.toHexString(System.nanoTime()).substring(0, 8);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA TIMING
+// -----------------------------------------------------------------------------
+
+final class ProximaTiming {
+    private long startNs;
+
+    void start() { startNs = System.nanoTime(); }
+    long elapsedNs() { return System.nanoTime() - startNs; }
+    long elapsedMs() { return elapsedNs() / 1_000_000; }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA MEMORY STUB (no actual allocator)
+// -----------------------------------------------------------------------------
+
+final class ProximaMemoryStub {
+    static long estimateParamBytes(int paramCount) {
+        return (long) paramCount * Double.BYTES;
+    }
