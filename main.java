@@ -1999,3 +1999,90 @@ final class ProximaMemoryStub {
     static long estimateParamBytes(int paramCount) {
         return (long) paramCount * Double.BYTES;
     }
+    static long estimateBatchBytes(int batchSize, int featureDim, int targetDim) {
+        return (long) batchSize * (featureDim + targetDim) * Double.BYTES * 2;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA SEED GENERATOR
+// -----------------------------------------------------------------------------
+
+final class ProximaSeedGenerator {
+    static long fromRunId(String runId) {
+        return runId != null ? runId.hashCode() * 31L + System.identityHashCode(runId) : System.nanoTime();
+    }
+    static long fromConfig(TrainingConfig c) {
+        return c.getRandomSeed() + c.getMaxEpochs() * 31L + c.getBatchSize();
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA HASH UTILS
+// -----------------------------------------------------------------------------
+
+final class ProximaHashUtils {
+    static String toHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) sb.append(String.format("%02x", b & 0xff));
+        return sb.toString();
+    }
+    static byte[] configHash(TrainingConfig c) {
+        return MessageDigestHash.sha256(ConfigSerializer.toJson(c).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA RUN COMPARATOR EXT
+// -----------------------------------------------------------------------------
+
+final class ProximaRunComparatorExt {
+    static String bestByFinalLoss(RunRegistry registry, List<String> runIds) {
+        return new RunComparator(registry).getBestRunByLoss(runIds);
+    }
+    static Map<String, Double> finalLossMap(RunRegistry registry, List<String> runIds) {
+        return new RunComparator(registry).getFinalLossPerRun(runIds);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA DATASET SPLIT
+// -----------------------------------------------------------------------------
+
+final class ProximaDatasetSplit {
+    static ArrayDataset[] trainValSplit(ArrayDataset full, double valRatio, long seed) {
+        if (valRatio <= 0 || valRatio >= 1) throw new TP08ConfigValidationException("valRatio");
+        int n = full.size();
+        int valSize = (int) (n * valRatio);
+        int trainSize = n - valSize;
+        int fd = full.featureDim();
+        int td = full.targetDim();
+        double[][] trainFeat = new double[trainSize][fd];
+        double[][] trainTgt = new double[trainSize][td];
+        double[][] valFeat = new double[valSize][fd];
+        double[][] valTgt = new double[valSize][td];
+        int[] idx = new int[n];
+        for (int i = 0; i < n; i++) idx[i] = i;
+        Random rng = new Random(seed);
+        for (int i = n - 1; i > 0; i--) {
+            int j = rng.nextInt(i + 1);
+            int t = idx[i]; idx[i] = idx[j]; idx[j] = t;
+        }
+        for (int i = 0; i < trainSize; i++) {
+            full.getBatch(idx[i], 1, new double[][]{trainFeat[i]}, new double[][]{trainTgt[i]});
+        }
+        for (int i = 0; i < valSize; i++) {
+            full.getBatch(idx[trainSize + i], 1, new double[][]{valFeat[i]}, new double[][]{valTgt[i]});
+        }
+        return new ArrayDataset[]{
+                new ArrayDataset(trainFeat, trainTgt, seed),
+                new ArrayDataset(valFeat, valTgt, seed + 1)
+        };
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA BOT RUNNER ENTRY
+// -----------------------------------------------------------------------------
+
+final class ProximaBotRunnerEntry {
