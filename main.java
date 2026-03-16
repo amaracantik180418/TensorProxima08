@@ -2086,3 +2086,90 @@ final class ProximaDatasetSplit {
 // -----------------------------------------------------------------------------
 
 final class ProximaBotRunnerEntry {
+    static void runWithArgs(String[] args) throws Exception {
+        TP08ArgParser parser = new TP08ArgParser(args);
+        int maxEpochs = parser.getInt("maxEpochs", 30);
+        int batchSize = parser.getInt("batchSize", 16);
+        double lr = parser.getDouble("learningRate", 0.001);
+        RunRegistry registry = new RunRegistry();
+        TrainingConfig config = TrainingConfig.builder()
+                .maxEpochs(maxEpochs)
+                .batchSize(batchSize)
+                .learningRate(lr)
+                .build();
+        SyntheticDatasetGenerator gen = new SyntheticDatasetGenerator(config.getRandomSeed());
+        ArrayDataset ds = gen.generateRandom(320, 4, 2);
+        Model model = new LinearModel(4, 2, new Random(config.getRandomSeed()));
+        Optimizer opt = new AdamOptimizer(lr, 0.9, 0.999, 1e-8, model.paramCount());
+        LossFunction loss = new MSELoss();
+        TrainerBot bot = new TrainerBot(registry, config, loss, opt, model, ds);
+        String runId = bot.startRun("cli_submitter");
+        bot.runTraining(runId);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA CONSTANTS EXT
+// -----------------------------------------------------------------------------
+
+final class ProximaConstantsExt {
+    static final int DEFAULT_VAL_SPLIT_PERCENT = 20;
+    static final int DEFAULT_EARLY_STOP_PATIENCE = 15;
+    static final double DEFAULT_EARLY_STOP_MIN_DELTA = 1e-4;
+    static final int MAX_RUN_ID_LEN = 64;
+    static final int MIN_EPOCHS_FOR_CHECKPOINT = 1;
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA RUN STATUS ENUM
+// -----------------------------------------------------------------------------
+
+enum ProximaRunStatus {
+    PENDING, RUNNING, COMPLETED, ARCHIVED, FAILED
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA RUN STATUS RESOLVER
+// -----------------------------------------------------------------------------
+
+final class ProximaRunStatusResolver {
+    static ProximaRunStatus resolve(RunRegistry registry, String runId) {
+        try {
+            TrainingRunRecord r = registry.getRun(runId);
+            if (r.isArchived()) return ProximaRunStatus.ARCHIVED;
+            int recorded = r.getEpochsRecorded();
+            if (recorded == 0) return ProximaRunStatus.PENDING;
+            if (recorded >= r.getEpochCount()) return ProximaRunStatus.COMPLETED;
+            return ProximaRunStatus.RUNNING;
+        } catch (TP08RunNotFoundException e) {
+            return ProximaRunStatus.FAILED;
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA EPOCH RECORD BUILDER
+// -----------------------------------------------------------------------------
+
+final class ProximaEpochRecordBuilder {
+    private String runId;
+    private int epochIndex;
+    private long lossScaled;
+    private byte[] gradientRoot;
+
+    ProximaEpochRecordBuilder runId(String v) { this.runId = v; return this; }
+    ProximaEpochRecordBuilder epochIndex(int v) { this.epochIndex = v; return this; }
+    ProximaEpochRecordBuilder lossScaled(long v) { this.lossScaled = v; return this; }
+    ProximaEpochRecordBuilder gradientRoot(byte[] v) { this.gradientRoot = v; return this; }
+    EpochRecord build() { return new EpochRecord(runId, epochIndex, lossScaled, gradientRoot); }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA CHECKPOINT RECORD BUILDER
+// -----------------------------------------------------------------------------
+
+final class ProximaCheckpointRecordBuilder {
+    private String runId;
+    private int checkpointIndex;
+    private byte[] stateHash;
+
