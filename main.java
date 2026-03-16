@@ -2173,3 +2173,90 @@ final class ProximaCheckpointRecordBuilder {
     private int checkpointIndex;
     private byte[] stateHash;
 
+    ProximaCheckpointRecordBuilder runId(String v) { this.runId = v; return this; }
+    ProximaCheckpointRecordBuilder checkpointIndex(int v) { this.checkpointIndex = v; return this; }
+    ProximaCheckpointRecordBuilder stateHash(byte[] v) { this.stateHash = v; return this; }
+    CheckpointRecord build() { return new CheckpointRecord(runId, checkpointIndex, stateHash); }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA METRICS AGGREGATOR EXT
+// -----------------------------------------------------------------------------
+
+final class ProximaMetricsAggregatorExt {
+    static double meanLoss(List<EpochRecord> records) {
+        return EpochRecordListHelpers.averageLoss(records);
+    }
+    static double stdLoss(List<EpochRecord> records) {
+        List<Double> losses = new ArrayList<>();
+        for (EpochRecord e : records) losses.add(e.getLoss());
+        return StatsAggregator.std(losses);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA FILE PATHS
+// -----------------------------------------------------------------------------
+
+final class ProximaFilePaths {
+    static Path runDir(Path base, String runId) { return base.resolve(runId); }
+    static Path epochCsvPath(Path base, String runId) { return runDir(base, runId).resolve("epoch_metrics.csv"); }
+    static Path checkpointPath(Path base, String runId, int index) { return runDir(base, runId).resolve("ckpt_" + index + ".bin"); }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA VALIDATION RESULT
+// -----------------------------------------------------------------------------
+
+final class ProximaValidationResult {
+    private final int epoch;
+    private final double trainLoss;
+    private final double valLoss;
+
+    ProximaValidationResult(int epoch, double trainLoss, double valLoss) {
+        this.epoch = epoch;
+        this.trainLoss = trainLoss;
+        this.valLoss = valLoss;
+    }
+    int getEpoch() { return epoch; }
+    double getTrainLoss() { return trainLoss; }
+    double getValLoss() { return valLoss; }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA BATCH SCHEDULER (simple round-robin)
+// -----------------------------------------------------------------------------
+
+final class ProximaBatchScheduler {
+    private final int totalBatches;
+    private final int[] order;
+    private int cursor = 0;
+
+    ProximaBatchScheduler(int totalBatches, Random rng) {
+        this.totalBatches = totalBatches;
+        this.order = new int[totalBatches];
+        for (int i = 0; i < totalBatches; i++) order[i] = i;
+        for (int i = totalBatches - 1; i > 0; i--) {
+            int j = rng.nextInt(i + 1);
+            int t = order[i]; order[i] = order[j]; order[j] = t;
+        }
+    }
+
+    int nextBatchIndex() {
+        int idx = order[cursor % totalBatches];
+        cursor++;
+        return idx;
+    }
+
+    void reset() { cursor = 0; }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA LOSS RECORD
+// -----------------------------------------------------------------------------
+
+final class ProximaLossRecord {
+    private final int step;
+    private final double value;
+    private final long timestampMs;
+
