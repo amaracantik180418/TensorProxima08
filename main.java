@@ -2260,3 +2260,82 @@ final class ProximaLossRecord {
     private final double value;
     private final long timestampMs;
 
+    ProximaLossRecord(int step, double value, long timestampMs) {
+        this.step = step;
+        this.value = value;
+        this.timestampMs = timestampMs;
+    }
+    int getStep() { return step; }
+    double getValue() { return value; }
+    long getTimestampMs() { return timestampMs; }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA STEP RECORDER
+// -----------------------------------------------------------------------------
+
+final class ProximaStepRecorder {
+    private final List<ProximaLossRecord> records = new CopyOnWriteArrayList<>();
+
+    void record(int step, double loss) {
+        records.add(new ProximaLossRecord(step, loss, System.currentTimeMillis()));
+    }
+
+    List<ProximaLossRecord> getRecords() { return new ArrayList<>(records); }
+    void clear() { records.clear(); }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA CONFIG VALIDATOR EXT
+// -----------------------------------------------------------------------------
+
+final class ProximaConfigValidatorExt {
+    static void validateForTraining(TrainingConfig c) {
+        ProximaRunValidator.validateConfig(c);
+        if (c.getCheckpointEveryEpochs() <= 0) throw new TP08ConfigValidationException("checkpointEveryEpochs");
+        if (c.getRandomSeed() == 0) throw new TP08ConfigValidationException("randomSeed");
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA RUN ID NORMALIZER
+// -----------------------------------------------------------------------------
+
+final class ProximaRunIdNormalizer {
+    static String normalize(String runId) {
+        if (runId == null) return "";
+        String s = runId.trim().toLowerCase();
+        if (s.length() > ProximaConstantsExt.MAX_RUN_ID_LEN)
+            s = s.substring(0, ProximaConstantsExt.MAX_RUN_ID_LEN);
+        return s;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PROXIMA EMPTY PLACEHOLDERS (reserved for future extensions)
+// -----------------------------------------------------------------------------
+
+final class ProximaPlaceholderA {
+    static int version() { return 1; }
+    static String tag() { return "tp08_placeholder_a"; }
+}
+final class ProximaPlaceholderB {
+    static double scaleFactor() { return 1e-6; }
+    static boolean enabled() { return false; }
+}
+final class ProximaPlaceholderC {
+    static List<String> supportedLosses() { return Arrays.asList("MSE", "CrossEntropy", "Huber"); }
+    static List<String> supportedOptimizers() { return Arrays.asList("SGD", "Adam", "RMSprop"); }
+}
+final class ProximaPlaceholderD {
+    static int maxEpochsLimit() { return 50000; }
+    static int maxBatchSizeLimit() { return 8192; }
+    static double minLearningRate() { return 1e-10; }
+    static double maxLearningRate() { return 10.0; }
+}
+final class ProximaPlaceholderE {
+    static String domainTag() { return "TensorProxima08.Run.v8"; }
+    static int majorVersion() { return ProximaVersionInfo.MAJOR; }
+    static int minorVersion() { return ProximaVersionInfo.MINOR; }
+    static String fullVersion() { return ProximaVersionInfo.versionString(); }
+}
